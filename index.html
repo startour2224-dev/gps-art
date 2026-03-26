@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        #map { height: 50vh; width: 100%; border-radius: 1.5rem; }
+        #map { height: 50vh; width: 100%; border-radius: 1.5rem; z-index: 1; }
         .glass-morphism {
             background: rgba(255, 255, 255, 0.9);
             backdrop-filter: blur(10px);
@@ -112,8 +112,9 @@
         let points = [];
         let totalDistance = 0;
         let currentMode = 'free';
-        let centerLatLng = [35.6812, 139.7671]; // デフォルト: 東京駅
+        let centerLatLng = [35.6812, 139.7671]; 
 
+        // 座標データを正しく復元
         const shapes = {
             star: [,,,,,,,,,,],
             heart: [,,,,,,,,],
@@ -129,12 +130,14 @@
             pathLine = L.polyline([], { color: '#4f46e5', weight: 6, opacity: 0.8 }).addTo(map);
             targetLine = L.polyline([], { color: '#94a3b8', weight: 3, dashArray: '8, 8', opacity: 0.4 }).addTo(map);
 
+            // ロード直後にGPS許可を求める
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(pos => {
                     centerLatLng = [pos.coords.latitude, pos.coords.longitude];
                     map.setView(centerLatLng, 17);
+                    L.marker(centerLatLng).addTo(map).bindPopup("現在地").openPopup();
                 }, (err) => {
-                    console.warn("GPS取得エラー:", err.message);
+                    alert("GPSを許可してください。設定 > ブラウザ > 位置情報 で変更できます。");
                 });
             }
         }
@@ -148,15 +151,11 @@
             if (isJson) payload.generationConfig = { responseMimeType: "application/json" };
             
             try {
-                const resp = await fetch(url, { 
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'application/json' }, 
-                    body: JSON.stringify(payload) 
-                });
+                const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                 const data = await resp.json();
-                return data.candidates.content.parts.text;
+                // 修正：パスを正しく指定
+                return data.candidates?.?.content?.parts?.?.text;
             } catch (e) {
-                console.error("Gemini API Error", e);
                 return null;
             }
         }
@@ -165,48 +164,26 @@
             const status = document.getElementById('ai-status');
             status.classList.remove('hidden');
             try {
-                const sys = "あなたはGPSアート作家です。100x100内の座標[[x,y],...]で図形を提案してください。JSON: {name, emoji, points, tip}";
+                const sys = "JSON: {name, emoji, points:[[x,y],...], tip}";
                 const res = await callGemini("面白い一筆書きを1つ提案して", sys, true);
                 if (!res) return;
                 const data = JSON.parse(res);
                 const id = `ai_${Date.now()}`;
                 shapes[id] = data.points;
-                
                 const btn = document.createElement('button');
                 btn.className = "shape-btn bg-indigo-50 border-2 border-indigo-200 p-3 rounded-2xl text-lg";
                 btn.innerHTML = data.emoji;
                 btn.onclick = () => selectShape(id);
                 document.getElementById('shape-list').prepend(btn);
-                
                 selectShape(id);
                 setMode('challenge');
             } finally { status.classList.add('hidden'); }
         }
 
-        async function analyzeMyArt() {
-            if (points.length < 2) return;
-            document.getElementById('analysis-loading').classList.remove('hidden');
-            document.getElementById('analyze-btn').classList.add('hidden');
-            try {
-                const sampled = points.filter((_, i) => i % 5 === 0).map(p => `[${p.toFixed(5)},${p.toFixed(5)}]`).join(',');
-                const sys = "GPSの軌跡を現代アートとして解説してください。JSON: {title, description}";
-                const res = await callGemini(`軌跡データ: ${sampled}`, sys, true);
-                if (!res) throw new Error();
-                const data = JSON.parse(res);
-                document.getElementById('art-title').innerText = data.title;
-                document.getElementById('art-description').innerText = data.description;
-                document.getElementById('ai-analysis').classList.remove('hidden');
-            } catch (e) {
-                document.getElementById('art-title').innerText = "都市の軌跡";
-                document.getElementById('art-description').innerText = "あなたの歩みは街に新しい物語を描きました。";
-                document.getElementById('ai-analysis').classList.remove('hidden');
-            } finally { document.getElementById('analysis-loading').classList.add('hidden'); }
-        }
-
         function setMode(mode) {
             currentMode = mode;
-            document.getElementById('btn-free').classList.toggle('bg-white', mode === 'free');
-            document.getElementById('btn-challenge').classList.toggle('bg-white', mode === 'challenge');
+            document.getElementById('btn-free').className = mode === 'free' ? 'flex-1 py-2.5 rounded-xl text-xs font-bold transition-all bg-white shadow-sm text-indigo-600' : 'flex-1 py-2.5 rounded-xl text-xs font-bold transition-all text-slate-400';
+            document.getElementById('btn-challenge').className = mode === 'challenge' ? 'flex-1 py-2.5 rounded-xl text-xs font-bold transition-all bg-white shadow-sm text-indigo-600' : 'flex-1 py-2.5 rounded-xl text-xs font-bold transition-all text-slate-400';
             document.getElementById('challenge-options').classList.toggle('hidden', mode === 'free');
             if (mode === 'free') {
                 targetLine.setLatLngs([]);
@@ -218,15 +195,14 @@
             const preview = document.getElementById('target-preview');
             const svg = document.getElementById('preview-svg');
             preview.classList.remove('hidden');
-            
             const shapeData = shapes[id];
             const pathStr = shapeData.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p} ${p}`).join(' ');
             svg.innerHTML = `<path d="${pathStr}" fill="none" stroke="currentColor" stroke-width="3" />`;
             
-            const scale = 0.00015;
+            const scale = 0.0002;
             const coords = shapeData.map(p => [
                 centerLatLng + (50 - p) * scale,
-                centerLatLng + (p - 50) * scale * 1.3
+                centerLatLng + (p - 50) * scale * 1.5
             ]);
             targetLine.setLatLngs(coords);
             map.fitBounds(targetLine.getBounds(), { padding: });
@@ -235,35 +211,31 @@
         function toggleTracking() {
             if (!isTracking) {
                 isTracking = true;
-                points = [];
-                totalDistance = 0;
+                points = []; totalDistance = 0;
                 pathLine.setLatLngs([]);
                 document.getElementById('btn-text').innerText = "お絵かきを終了";
                 document.getElementById('start-btn').classList.replace('bg-indigo-600', 'bg-rose-500');
-                
                 watchId = navigator.geolocation.watchPosition(pos => {
                     const latlng = [pos.coords.latitude, pos.coords.longitude];
                     if (points.length > 0) {
-                        const last = L.latLng(points[points.length - 1]);
-                        totalDistance += last.distanceTo(L.latLng(latlng));
+                        totalDistance += L.latLng(points[points.length - 1]).distanceTo(L.latLng(latlng));
                         document.getElementById('stats').innerText = `距離: ${(totalDistance / 1000).toFixed(2)} km`;
                     }
                     points.push(latlng);
                     pathLine.setLatLngs(points);
                     map.panTo(latlng);
-                }, (err) => console.error(err), { enableHighAccuracy: true });
+                }, null, { enableHighAccuracy: true });
             } else {
                 isTracking = false;
                 navigator.geolocation.clearWatch(watchId);
-                document.getElementById('completion-msg').innerText = `総走行距離: ${(totalDistance / 1000).toFixed(2)}km`;
+                document.getElementById('completion-msg').innerText = `走行距離: ${(totalDistance / 1000).toFixed(2)}km`;
                 document.getElementById('modal').classList.remove('hidden');
                 document.getElementById('modal').classList.add('flex');
             }
         }
 
         function resetArt() {
-            points = []; 
-            totalDistance = 0;
+            points = []; totalDistance = 0;
             pathLine.setLatLngs([]);
             document.getElementById('stats').innerText = `距離: 0.00 km`;
         }
