@@ -88,7 +88,7 @@
 
     <!-- UI Modal -->
     <div id="modal" class="fixed inset-0 bg-slate-900/80 hidden items-center justify-center z- p-6 backdrop-blur-md">
-        <div class="bg-white rounded-[2.5rem] p-8 w-full max-w-sm text-center shadow-2xl">
+        <div class="bg-white rounded-[2.5rem] p-8 w-full max-sm text-center shadow-2xl">
             <h2 class="text-2xl font-black text-slate-800 mb-2">作品が完成！</h2>
             <p class="text-slate-500 text-sm mb-6" id="completion-msg"></p>
             <div id="ai-analysis" class="mb-6 p-5 bg-indigo-50 rounded-3xl text-left hidden border border-indigo-100">
@@ -137,8 +137,9 @@
                     map.setView(centerLatLng, 17);
                     L.marker(centerLatLng).addTo(map).bindPopup("現在地").openPopup();
                 }, (err) => {
+                    console.error("Geolocation error:", err);
                     alert("GPSを許可してください。設定 > ブラウザ > 位置情報 で変更できます。");
-                });
+                }, { enableHighAccuracy: true });
             }
         }
 
@@ -153,9 +154,9 @@
             try {
                 const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                 const data = await resp.json();
-                // 修正：パスを正しく指定
                 return data.candidates?.?.content?.parts?.?.text;
             } catch (e) {
+                console.error("Gemini API Error:", e);
                 return null;
             }
         }
@@ -177,6 +178,8 @@
                 document.getElementById('shape-list').prepend(btn);
                 selectShape(id);
                 setMode('challenge');
+            } catch (err) {
+                console.error("Task Gen Error:", err);
             } finally { status.classList.add('hidden'); }
         }
 
@@ -196,9 +199,12 @@
             const svg = document.getElementById('preview-svg');
             preview.classList.remove('hidden');
             const shapeData = shapes[id];
+            
+            // 描画用のパス作成
             const pathStr = shapeData.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p} ${p}`).join(' ');
             svg.innerHTML = `<path d="${pathStr}" fill="none" stroke="currentColor" stroke-width="3" />`;
             
+            // 地図上の座標に変換
             const scale = 0.0002;
             const coords = shapeData.map(p => [
                 centerLatLng + (50 - p) * scale,
@@ -215,6 +221,7 @@
                 pathLine.setLatLngs([]);
                 document.getElementById('btn-text').innerText = "お絵かきを終了";
                 document.getElementById('start-btn').classList.replace('bg-indigo-600', 'bg-rose-500');
+                
                 watchId = navigator.geolocation.watchPosition(pos => {
                     const latlng = [pos.coords.latitude, pos.coords.longitude];
                     if (points.length > 0) {
@@ -224,14 +231,34 @@
                     points.push(latlng);
                     pathLine.setLatLngs(points);
                     map.panTo(latlng);
-                }, null, { enableHighAccuracy: true });
+                }, (err) => console.error(err), { enableHighAccuracy: true });
             } else {
                 isTracking = false;
-                navigator.geolocation.clearWatch(watchId);
+                if (watchId) navigator.geolocation.clearWatch(watchId);
                 document.getElementById('completion-msg').innerText = `走行距離: ${(totalDistance / 1000).toFixed(2)}km`;
                 document.getElementById('modal').classList.remove('hidden');
                 document.getElementById('modal').classList.add('flex');
             }
+        }
+
+        async function analyzeMyArt() {
+            if (points.length < 2) return;
+            document.getElementById('analysis-loading').classList.remove('hidden');
+            document.getElementById('analyze-btn').classList.add('hidden');
+            try {
+                const sampled = points.filter((_, i) => i % 5 === 0).map(p => `[${p.toFixed(5)},${p.toFixed(5)}]`).join(',');
+                const sys = "GPSの軌跡を現代アートとして解説してください。JSON: {title, description}";
+                const res = await callGemini(`軌跡データ: ${sampled}`, sys, true);
+                if (!res) throw new Error();
+                const data = JSON.parse(res);
+                document.getElementById('art-title').innerText = data.title;
+                document.getElementById('art-description').innerText = data.description;
+                document.getElementById('ai-analysis').classList.remove('hidden');
+            } catch (e) {
+                document.getElementById('art-title').innerText = "都市の軌跡";
+                document.getElementById('art-description').innerText = "あなたの歩みは街に新しい物語を描きました。";
+                document.getElementById('ai-analysis').classList.remove('hidden');
+            } finally { document.getElementById('analysis-loading').classList.add('hidden'); }
         }
 
         function resetArt() {
@@ -243,6 +270,8 @@
         function closeModal() { 
             document.getElementById('modal').classList.add('hidden');
             document.getElementById('modal').classList.remove('flex');
+            document.getElementById('analyze-btn').classList.remove('hidden');
+            document.getElementById('ai-analysis').classList.add('hidden');
         }
 
         window.onload = initMap;
